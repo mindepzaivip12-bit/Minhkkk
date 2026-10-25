@@ -1,206 +1,86 @@
-import os
-import time
-import asyncio
 import logging
-import httpx # Đã thay thế requests bằng httpx
-from playwright.async_api import async_playwright
+import random
+import re
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# Cấu hình logging để dễ theo dõi trên Render
+# Cấu hình logging cơ bản
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-# --- CẤU HÌNH THÔNG TIN ---
-TARGET_URL = "https://lc79b.bet"
-API_MD5 = "https://ancient-poetry-7f56.lot896613.workers.dev/?mode=md5"
-API_HU = "https://wtx.tele68.com/v1/tx/sessions"
+# Token của Bot
 TELEGRAM_TOKEN = "8627314570:AAG8L2vxe8u-4uDGdnip8gzoW8BlDQ_bg3E"
 
-# Biến toàn cục quản lý trạng thái
-state = {
-    "playwright": None,
-    "browser": None,
-    "context": None,
-    "page": None,
-    "is_logged_in": False,
-    "is_running": False,
-    "account": "",
-    "password": "",
-    "last_balance": "0",
-    "bet_task": None # Thêm biến này để quản lý việc dừng bot
-}
-
-async def get_balance(page):
-    """Hàm quét lấy số dư tài khoản trên giao diện game"""
-    try:
-        # 💡 Thay thế '.user-balance' bằng class/id số dư thực tế trên web game
-        balance_elem = page.locator(".user-balance, .money-number, span.balance").first
-        if await balance_elem.is_visible(timeout=5000):
-            text = await balance_elem.inner_text()
-            return text.strip()
-    except Exception as e:
-        logging.error(f"Lỗi khi lấy số dư: {e}")
-    return "Không xác định"
-
-# --- CÁC HÀM XỬ LÝ LỆNH TELEGRAM ---
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /start"""
+    """Lệnh /start giới thiệu tool"""
     msg = (
-        "🔥 **XIN CHÀO BẠN ĐÃ ĐẾN VỚI TOOL BONDZTOOLS** 🔥\n\n"
-        "📌 **Danh sách lệnh điều khiển:**\n"
-        "👉 `/dangnhap <taikhoan> <matkhau>` : Đăng nhập tài khoản game\n"
-        "👉 `/chay` : Bắt đầu chạy auto cược 2 sàn theo API\n"
-        "👉 `/dung` : Dừng hệ thống auto cược\n"
+        "🔥 **TOOL MD5 BON IOS FREE** 🔥\n"
+        "➖➖➖➖➖➖➖➖➖➖➖\n"
+        "📌 **Hướng dẫn sử dụng:**\n"
+        "👉 Nhập lệnh: `/md5 <chuỗi_md5>`\n"
+        "👉 Hỗ trợ mã MD5 dài **32 ký tự** hoặc **64 ký tự**.\n\n"
+        "💡 *Thuật toán AI phân tích dự đoán Tài/Xỉu tự động, không cần Key.*"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def dangnhap_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /dangnhap <tk> <mk>"""
-    if len(context.args) < 2:
-        await update.message.reply_text("⚠️ Vui lòng nhập đúng cú pháp: `/dangnhap <taikhoan> <matkhau>`", parse_mode="Markdown")
+async def md5_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lệnh /md5 <chuỗi_32_hoặc_64_ký_tự>"""
+    if not context.args:
+        await update.message.reply_text("⚠️ Vui lòng nhập mã MD5!\nCú pháp: `/md5 <chuỗi_md5>`", parse_mode="Markdown")
         return
 
-    username = context.args[0]
-    password = context.args[1]
-    
-    state["account"] = username
-    state["password"] = password
+    md5_input = context.args[0].strip()
 
-    await update.message.reply_text(f"⏳ Đang tiến hành kết nối và đăng nhập tài khoản `{username}`...", parse_mode="Markdown")
-
-    try:
-        if not state["playwright"]:
-            state["playwright"] = await async_playwright().start()
-        
-        if not state["browser"]:
-            state["browser"] = await state["playwright"].chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
-            state["context"] = await state["browser"].new_context(viewport={"width": 1280, "height": 800})
-            state["page"] = await state["context"].new_page()
-
-        page = state["page"]
-        await page.goto(TARGET_URL, timeout=60000)
-        await asyncio.sleep(4)
-
-        # --- THỰC HIỆN ĐĂNG NHẬP ---
-        # 💡 Thay các selector bên dưới cho đúng với giao diện web thực tế
-        # await page.fill("input[placeholder*='Tài khoản']", username)
-        # await page.fill("input[placeholder*='Mật khẩu']", password)
-        # await page.click("button:has-text('Đăng Nhập')")
-        await asyncio.sleep(5)
-
-        # Lấy số dư sau khi đăng nhập
-        balance = await get_balance(page)
-        state["last_balance"] = balance
-        state["is_logged_in"] = True
-
-        reply_msg = (
-            f"✅ **ĐĂNG NHẬP THÀNH CÔNG!**\n"
-            f"👤 Tài khoản: `{username}`\n"
-            f"💰 Số dư hiện tại: `{balance}`\n\n"
-            f"👉 Nhập `/chay` để bắt đầu auto cược."
+    # Kiểm tra độ dài 32 hoặc 64 và phải là ký tự hex (0-9, a-f)
+    if not (re.match(r'^[a-fA-F0-9]{32}$', md5_input) or re.match(r'^[a-fA-F0-9]{64}$', md5_input)):
+        await update.message.reply_text(
+            "❌ **Mã MD5 không hợp lệ!**\n"
+            "Vui lòng nhập chuỗi dài đúng 32 hoặc 64 ký tự (chỉ chứa số 0-9 và chữ A-F).", 
+            parse_mode="Markdown"
         )
-        await update.message.reply_text(reply_msg, parse_mode="Markdown")
-
-    except Exception as e:
-        logging.error(f"Lỗi đăng nhập: {e}")
-        await update.message.reply_text(f"❌ Đăng nhập thất bại: `{str(e)}`", parse_mode="Markdown")
-
-async def chay_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Vòng lặp chạy ngầm tự động cược"""
-    last_session = None
-
-    while state["is_running"]:
-        try:
-            # 1. Gọi 2 API lấy dữ liệu (Sử dụng httpx bất đồng bộ)
-            async with httpx.AsyncClient() as client:
-                res_md5 = (await client.get(API_MD5, timeout=10)).json()
-                res_hu = (await client.get(API_HU, timeout=10)).json()
-
-            current_session = res_hu.get("session") or res_hu.get("id") or time.strftime("%H%M%S")
-
-            if current_session != last_session:
-                last_session = current_session
-
-                # 2. Thực hiện thao tác đặt cược trên 2 sàn qua Playwright
-                page = state["page"]
-                # await page.click("#btn_san_1_tai")
-                # await page.click("#btn_san_2_xiu")
-
-                # Chờ phiên hoàn thành (Ví dụ: 25 giây)
-                await asyncio.sleep(25)
-
-                # 3. Lấy số dư mới & kiểm tra kết quả Đúng / Sai
-                new_balance = await get_balance(page)
-                
-                # Logic xác định Thắng / Thua (Đúng / Sai)
-                status_str = "✅ ĐÚNG (Thắng)" if new_balance != state["last_balance"] else "⚠️ SAI (Thua / Hòa)"
-
-                # 4. Báo cáo kết quả về Telegram
-                report = (
-                    f"📢 **BÁO CÁO PHIÊN CƯỢC: {current_session}**\n"
-                    f"-----------------------------------\n"
-                    f"🎯 Trạng thái: {status_str}\n"
-                    f"💰 Số dư trước: `{state['last_balance']}`\n"
-                    f"💰 Số dư mới: `{new_balance}`"
-                )
-                state["last_balance"] = new_balance
-                await context.bot.send_message(chat_id=chat_id, text=report, parse_mode="Markdown")
-
-        except asyncio.CancelledError:
-            # Thoát vòng lặp an toàn khi bị hủy task
-            break
-        except Exception as e:
-            logging.error(f"Lỗi trong vòng lặp cược: {e}")
-            await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Lỗi ván cược: `{str(e)}`", parse_mode="Markdown")
-
-        await asyncio.sleep(10)
-
-async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /chay"""
-    if not state["is_logged_in"]:
-        await update.message.reply_text("⚠️ Bạn chưa đăng nhập! Vui lòng dùng lệnh `/dangnhap <tk> <mk>` trước.", parse_mode="Markdown")
         return
 
-    if state["is_running"]:
-        await update.message.reply_text("⚠️ Tool hiện tại đang chạy rồi!", parse_mode="Markdown")
-        return
+    # --- THUẬT TOÁN DỰ ĐOÁN (TẠO NGẪU NHIÊN THEO XÁC SUẤT) ---
+    # Random Tài hoặc Xỉu
+    ket_qua = random.choice(["Tài 🔥", "Xỉu ❄️"])
+    
+    # Phân bổ tỷ lệ % theo yêu cầu (50-60, 60-70, 80-100)
+    khoang_phan_tram = random.choices(
+        ["50-60", "60-70", "80-100"], 
+        weights=[45, 35, 20], # 45% ra 50-60%, 35% ra 60-70%, 20% ra 80-100%
+        k=1
+    )[0]
 
-    state["is_running"] = True
-    await update.message.reply_text("🚀 **ĐÃ BẮT ĐẦU KÍCH HOẠT AUTO CƯỢC 2 SÀN!**\nTool sẽ tự động nhận diện phiên API và báo kết quả liên tục.", parse_mode="Markdown")
+    if khoang_phan_tram == "50-60":
+        phan_tram = random.randint(50, 60)
+    elif khoang_phan_tram == "60-70":
+        phan_tram = random.randint(61, 70)
+    else:
+        phan_tram = random.randint(80, 100)
 
-    # Lưu task vào state để quản lý
-    state["bet_task"] = asyncio.create_task(chay_loop(context, update.effective_chat.id))
-
-async def dung_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /dung"""
-    if not state["is_running"]:
-        await update.message.reply_text("⚠️ Tool hiện tại đang dừng, không có phiên nào đang chạy.", parse_mode="Markdown")
-        return
-
-    state["is_running"] = False
-    # Hủy task đang chạy ngầm
-    if state.get("bet_task") and not state["bet_task"].done():
-        state["bet_task"].cancel()
-        
-    await update.message.reply_text("🛑 **ĐÃ DỪNG AUTO CƯỢC THÀNH CÔNG!**", parse_mode="Markdown")
+    # Format tin nhắn trả về
+    msg = (
+        f"🤖 **TOOL MD5 BON IOS FREE** 🤖\n"
+        f"➖➖➖➖➖➖➖➖➖➖➖\n"
+        f"🔗 **Mã MD5:** `{md5_input}`\n"
+        f"🎯 **Dự đoán:** {ket_qua}\n"
+        f"📊 **Tỷ lệ thắng:** {phan_tram}%\n"
+        f"➖➖➖➖➖➖➖➖➖➖➖\n"
+        f"💡 *Chúc bạn may mắn!*"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 def main():
-    """Khởi chạy Telegram Bot Application"""
+    """Khởi chạy Telegram Bot"""
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    # Đăng ký các lệnh
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("dangnhap", dangnhap_command))
-    app.add_handler(CommandHandler("chay", chay_command))
-    app.add_handler(CommandHandler("dung", dung_command))
+    app.add_handler(CommandHandler("md5", md5_command))
 
-    logging.info("Bot Telegram BONDZTOOLS đã khởi động...")
+    logging.info("Bot TOOL MD5 BON IOS FREE đã khởi động...")
     app.run_polling()
 
 if __name__ == "__main__":
