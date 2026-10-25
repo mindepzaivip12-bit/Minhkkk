@@ -2,7 +2,6 @@ import asyncio
 import logging
 import random
 import httpx
-import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -21,168 +20,139 @@ API_LCMD5 = "https://wtxmd52.tele68.com/v1/txmd5/sessions"
 
 # Quản lý trạng thái
 state = {
-    "current_game": None,      # 'lctx' hoặc 'lcmd5'
-    "is_running": False,       # Trạng thái đang chạy auto
-    "bet_task": None,          # Lưu tiến trình chạy ngầm
-    "last_session": None       # Lưu ID phiên trước đó để tránh báo trùng
+    "current_game": None,
+    "is_running": False,
+    "bet_task": None,
+    "last_session": None
 }
 
 def generate_prediction():
-    """Hàm sinh thuật toán dự đoán ngẫu nhiên theo tỷ lệ %"""
+    """Thuật toán dự đoán Tài/Xỉu và %"""
     ket_qua = random.choice(["Tài 🔥", "Xỉu ❄️"])
-    
-    # Phân bổ tỷ lệ (50-60% ra nhiều nhất, 80-100% ra ít nhất)
-    khoang_phan_tram = random.choices(
-        ["50-60", "60-70", "80-100"], 
-        weights=[45, 35, 20], 
-        k=1
-    )[0]
+    khoang = random.choices(["50-60", "60-70", "80-100"], weights=[45, 35, 20], k=1)[0]
 
-    if khoang_phan_tram == "50-60":
-        phan_tram = random.randint(50, 60)
-    elif khoang_phan_tram == "60-70":
-        phan_tram = random.randint(61, 70)
+    if khoang == "50-60":
+        pt = random.randint(50, 60)
+    elif khoang == "60-70":
+        pt = random.randint(61, 70)
     else:
-        phan_tram = random.randint(80, 100)
+        pt = random.randint(80, 100)
+    return ket_qua, pt
 
-    return ket_qua, phan_tram
+def extract_session_id(data):
+    """Dò tìm mã phiên tự động trong JSON"""
+    if isinstance(data, dict):
+        for key in ["session", "id", "session_id", "issue"]:
+            if key in data and isinstance(data[key], (int, str)):
+                return str(data[key])
+        if "data" in data:
+            inner = data["data"]
+            if isinstance(inner, list) and len(inner) > 0:
+                for key in ["session", "id", "session_id", "issue"]:
+                    if key in inner[0]: return str(inner[0][key])
+            elif isinstance(inner, dict):
+                for key in ["session", "id", "session_id", "issue"]:
+                    if key in inner: return str(inner[key])
+    elif isinstance(data, list) and len(data) > 0:
+        for key in ["session", "id", "session_id", "issue"]:
+            if key in data[0]: return str(data[0][key])
+    return "Không xác định"
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /start hướng dẫn sử dụng"""
     msg = (
-        "🔥 **HỆ THỐNG TOOL BOT LC79** 🔥\n"
+        "🔥 **TOOL DỰ ĐOÁN TÀI XỈU LC79** 🔥\n"
         "➖➖➖➖➖➖➖➖➖➖➖\n"
-        "📌 **Hướng dẫn sử dụng:**\n"
-        "1️⃣ Chọn sàn game:\n"
-        "👉 `/lctx` : Chọn sàn LC79 Tài Xỉu\n"
-        "👉 `/lcmd5` : Chọn sàn LC79 MD5\n\n"
-        "2️⃣ Điều khiển Tool:\n"
-        "👉 `/chay` : Bắt đầu auto quét API dự đoán\n"
-        "👉 `/dung` : Dừng auto\n\n"
-        "🎲 *Chọn sàn xong, ấn /chay bot sẽ tự động báo phiên.*"
+        "👉 `/lctx` : Chọn sàn Tài Xỉu\n"
+        "👉 `/lcmd5` : Chọn sàn MD5\n"
+        "👉 `/chay` : Bắt đầu chạy tự động\n"
+        "👉 `/dung` : Dừng chạy\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def lctx_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh chọn sàn LC79 Tài Xỉu"""
     if state["is_running"]:
-        await update.message.reply_text("⚠️ Vui lòng dùng `/dung` để dừng tool trước khi đổi sàn!", parse_mode="Markdown")
-        return
+        return await update.message.reply_text("⚠️ Dừng tool trước khi đổi sàn (`/dung`).")
     state["current_game"] = "lctx"
-    await update.message.reply_text("✅ **Đã chọn sàn: LC79 Tài Xỉu**\n👉 Nhập `/chay` để bắt đầu.", parse_mode="Markdown")
+    await update.message.reply_text("✅ **Đã chọn: LC79 Tài Xỉu**\n👉 Bấm `/chay` để chạy.", parse_mode="Markdown")
 
 async def lcmd5_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh chọn sàn LC79 MD5"""
     if state["is_running"]:
-        await update.message.reply_text("⚠️ Vui lòng dùng `/dung` để dừng tool trước khi đổi sàn!", parse_mode="Markdown")
-        return
+        return await update.message.reply_text("⚠️ Dừng tool trước khi đổi sàn (`/dung`).")
     state["current_game"] = "lcmd5"
-    await update.message.reply_text("✅ **Đã chọn sàn: LC79 MD5**\n👉 Nhập `/chay` để bắt đầu.", parse_mode="Markdown")
+    await update.message.reply_text("✅ **Đã chọn: LC79 MD5**\n👉 Bấm `/chay` để chạy.", parse_mode="Markdown")
 
-async def auto_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Vòng lặp tự động quét API và dự đoán"""
+async def fetch_and_predict(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Hàm gọi API và gửi kết quả ngay lập tức"""
     game = state["current_game"]
     api_url = API_LCTX if game == "lctx" else API_LCMD5
     game_name = "LC79 TÀI XỈU" if game == "lctx" else "LC79 MD5"
 
-    while state["is_running"]:
-        try:
-            # Gọi API lấy dữ liệu
-            async with httpx.AsyncClient() as client:
-                res = await client.get(api_url, timeout=10)
-                data = res.json()
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with httpx.AsyncClient(headers=headers) as client:
+            res = await client.get(api_url, timeout=10)
+            data = res.json()
 
-            # Bắt ID phiên hiện tại (Xử lý linh hoạt nhiều cấu trúc JSON)
-            session_id = None
-            if isinstance(data, dict):
-                # Thử tìm các key phổ biến
-                session_id = data.get("session") or data.get("id") or data.get("session_id")
-                if not session_id and "data" in data:
-                    if isinstance(data["data"], list) and len(data["data"]) > 0:
-                        session_id = data["data"][0].get("id") or data["data"][0].get("session")
-                    elif isinstance(data["data"], dict):
-                        session_id = data["data"].get("id") or data["data"].get("session")
-            elif isinstance(data, list) and len(data) > 0:
-                session_id = data[0].get("id") or data[0].get("session")
+        session_id = extract_session_id(data)
 
-            # Nếu API không trả về ID chuẩn, dùng thời gian thực để tạo ID giả (tránh lỗi)
-            if not session_id:
-                session_id = f"Phiên_{int(time.time())}"
+        # Chỉ báo nếu là phiên mới
+        if session_id != state["last_session"]:
+            state["last_session"] = session_id
+            ket_qua, phan_tram = generate_prediction()
 
-            # Nếu phát hiện phiên mới (khác phiên vừa báo)
-            if session_id != state["last_session"]:
-                state["last_session"] = session_id
-                
-                # Sinh dự đoán
-                ket_qua, phan_tram = generate_prediction()
-
-                # Gửi tin nhắn báo cáo
-                msg = (
-                    f"🎰 **{game_name}**\n"
-                    f"➖➖➖➖➖➖➖➖➖➖➖\n"
-                    f"🆔 **Phiên:** `{session_id}`\n"
-                    f"🎯 **Dự đoán:** {ket_qua}\n"
-                    f"📊 **Tỷ lệ thắng:** {phan_tram}%\n"
-                    f"➖➖➖➖➖➖➖➖➖➖➖\n"
-                    f"💡 *Chờ kết quả phiên tiếp theo...*"
-                )
-                await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
-
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logging.error(f"Lỗi API: {e}")
+            msg = (
+                f"🎰 **{game_name}**\n"
+                f"➖➖➖➖➖➖➖➖➖➖➖\n"
+                f"🆔 **Phiên:** `{session_id}`\n"
+                f"🎯 **Kết quả:** {ket_qua}\n"
+                f"📊 **Tỷ lệ:** {phan_tram}%\n"
+                f"➖➖➖➖➖➖➖➖➖➖➖"
+            )
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
             
-        # Nghỉ 5 giây trước khi check API tiếp (tránh spam server)
-        await asyncio.sleep(5)
+    except Exception as e:
+        logging.error(f"Lỗi API: {e}")
+
+async def auto_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Vòng lặp tự động quét API liên tục"""
+    while state["is_running"]:
+        await fetch_and_predict(context, chat_id)
+        await asyncio.sleep(5) # Quét mỗi 5 giây
 
 async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /chay bắt đầu auto"""
     if not state["current_game"]:
-        await update.message.reply_text("⚠️ Bạn chưa chọn sàn!\nVui lòng chọn `/lctx` hoặc `/lcmd5` trước.", parse_mode="Markdown")
-        return
-
+        return await update.message.reply_text("⚠️ Chưa chọn sàn! Chọn `/lctx` hoặc `/lcmd5`.")
+    
     if state["is_running"]:
-        await update.message.reply_text("⚠️ Tool đang chạy rồi! Vui lòng `/dung` trước khi chạy lại.", parse_mode="Markdown")
-        return
+        return await update.message.reply_text("⚠️ Tool đang chạy rồi!")
 
-    # Bật trạng thái chạy
     state["is_running"] = True
     state["last_session"] = None 
-    
-    game_name = "LC79 TÀI XỈU" if state["current_game"] == "lctx" else "LC79 MD5"
-    await update.message.reply_text(
-        f"🚀 **ĐÃ BẮT ĐẦU CHẠY TOOL {game_name}**\nHệ thống đang kết nối API để bắt phiên...", 
-        parse_mode="Markdown"
-    )
+    chat_id = update.effective_chat.id
 
-    # Khởi chạy task ngầm
-    state["bet_task"] = asyncio.create_task(auto_loop(context, update.effective_chat.id))
+    # BẮT ĐẦU CHẠY VÀ LẤY KẾT QUẢ NGAY LẬP TỨC
+    await update.message.reply_text("🚀 **Đang lấy dữ liệu phiên...**")
+    await fetch_and_predict(context, chat_id)
+    
+    # Sau đó mới chạy vòng lặp ngầm
+    state["bet_task"] = asyncio.create_task(auto_loop(context, chat_id))
 
 async def dung_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /dung dừng auto"""
     if not state["is_running"]:
-        await update.message.reply_text("⚠️ Tool hiện tại đang dừng.", parse_mode="Markdown")
-        return
-
+        return await update.message.reply_text("⚠️ Tool đang dừng.")
+    
     state["is_running"] = False
     if state.get("bet_task") and not state["bet_task"].done():
         state["bet_task"].cancel()
-        
-    await update.message.reply_text("🛑 **ĐÃ DỪNG TOOL THÀNH CÔNG!**", parse_mode="Markdown")
+    await update.message.reply_text("🛑 **ĐÃ DỪNG TOOL!**", parse_mode="Markdown")
 
 def main():
-    """Khởi chạy Bot"""
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    # Đăng ký các lệnh
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("lctx", lctx_command))
     app.add_handler(CommandHandler("lcmd5", lcmd5_command))
     app.add_handler(CommandHandler("chay", chay_command))
     app.add_handler(CommandHandler("dung", dung_command))
-
-    logging.info("Bot LC79 đã khởi động...")
     app.run_polling()
 
 if __name__ == "__main__":
