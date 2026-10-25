@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 import httpx
+import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -11,7 +12,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Token của Bot
+# Token mới của Bot
 TELEGRAM_TOKEN = "8922811014:AAG0skxtzMPWNgM1ZpU8GWKKKaM-l-XDCBI"
 
 # Cấu hình API
@@ -58,7 +59,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2️⃣ Điều khiển Tool:\n"
         "👉 `/chay` : Bắt đầu auto quét API dự đoán\n"
         "👉 `/dung` : Dừng auto\n\n"
-        "💡 *Thuật toán AI nâng cấp, tự động nhận diện phiên mới.*"
+        "🎲 *Chọn sàn xong, ấn /chay bot sẽ tự động báo phiên.*"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -86,26 +87,29 @@ async def auto_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
     while state["is_running"]:
         try:
+            # Gọi API lấy dữ liệu
             async with httpx.AsyncClient() as client:
                 res = await client.get(api_url, timeout=10)
                 data = res.json()
 
-            # Cố gắng lấy ID phiên hiện tại từ API (tùy thuộc cấu trúc JSON trả về)
-            # Giả định API trả về dict có key 'session' hoặc 'id' hoặc list các phiên
+            # Bắt ID phiên hiện tại (Xử lý linh hoạt nhiều cấu trúc JSON)
             session_id = None
             if isinstance(data, dict):
+                # Thử tìm các key phổ biến
                 session_id = data.get("session") or data.get("id") or data.get("session_id")
-                # Nếu API trả về list session trong key 'data'
-                if not session_id and "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
-                    session_id = data["data"][0].get("id") or data["data"][0].get("session")
+                if not session_id and "data" in data:
+                    if isinstance(data["data"], list) and len(data["data"]) > 0:
+                        session_id = data["data"][0].get("id") or data["data"][0].get("session")
+                    elif isinstance(data["data"], dict):
+                        session_id = data["data"].get("id") or data["data"].get("session")
             elif isinstance(data, list) and len(data) > 0:
-                 session_id = data[0].get("id") or data[0].get("session")
+                session_id = data[0].get("id") or data[0].get("session")
 
-            # Fallback nếu không tìm thấy ID
+            # Nếu API không trả về ID chuẩn, dùng thời gian thực để tạo ID giả (tránh lỗi)
             if not session_id:
-                session_id = str(data)
+                session_id = f"Phiên_{int(time.time())}"
 
-            # Nếu là phiên mới (khác phiên cũ)
+            # Nếu phát hiện phiên mới (khác phiên vừa báo)
             if session_id != state["last_session"]:
                 state["last_session"] = session_id
                 
@@ -114,13 +118,13 @@ async def auto_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
                 # Gửi tin nhắn báo cáo
                 msg = (
-                    f"🤖 **{game_name}** 🤖\n"
+                    f"🎰 **{game_name}**\n"
                     f"➖➖➖➖➖➖➖➖➖➖➖\n"
                     f"🆔 **Phiên:** `{session_id}`\n"
                     f"🎯 **Dự đoán:** {ket_qua}\n"
                     f"📊 **Tỷ lệ thắng:** {phan_tram}%\n"
                     f"➖➖➖➖➖➖➖➖➖➖➖\n"
-                    f"💡 *Hệ thống tự động phân tích...*"
+                    f"💡 *Chờ kết quả phiên tiếp theo...*"
                 )
                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
@@ -128,10 +132,9 @@ async def auto_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
             break
         except Exception as e:
             logging.error(f"Lỗi API: {e}")
-            # Không gửi tin nhắn báo lỗi liên tục để tránh spam, chỉ log ra hệ thống
             
-        # Nghỉ 5-10 giây trước khi check API tiếp
-        await asyncio.sleep(7)
+        # Nghỉ 5 giây trước khi check API tiếp (tránh spam server)
+        await asyncio.sleep(5)
 
 async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lệnh /chay bắt đầu auto"""
@@ -140,15 +143,16 @@ async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if state["is_running"]:
-        await update.message.reply_text("⚠️ Tool đang chạy rồi!", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Tool đang chạy rồi! Vui lòng `/dung` trước khi chạy lại.", parse_mode="Markdown")
         return
 
+    # Bật trạng thái chạy
     state["is_running"] = True
-    state["last_session"] = None # Reset phiên để bắt đầu nhận diện lại từ đầu
+    state["last_session"] = None 
     
     game_name = "LC79 TÀI XỈU" if state["current_game"] == "lctx" else "LC79 MD5"
     await update.message.reply_text(
-        f"🚀 **ĐÃ BẮT ĐẦU CHẠY TOOL {game_name}**\nTool sẽ tự động bắt phiên và dự đoán kết quả.", 
+        f"🚀 **ĐÃ BẮT ĐẦU CHẠY TOOL {game_name}**\nHệ thống đang kết nối API để bắt phiên...", 
         parse_mode="Markdown"
     )
 
@@ -158,7 +162,7 @@ async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def dung_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lệnh /dung dừng auto"""
     if not state["is_running"]:
-        await update.message.reply_text("⚠️ Tool hiện tại đang dừng, không có tiến trình nào chạy.", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Tool hiện tại đang dừng.", parse_mode="Markdown")
         return
 
     state["is_running"] = False
