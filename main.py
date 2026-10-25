@@ -2,7 +2,7 @@ import os
 import time
 import asyncio
 import logging
-import requests
+import httpx # Đã thay thế requests bằng httpx
 from playwright.async_api import async_playwright
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -29,7 +29,8 @@ state = {
     "is_running": False,
     "account": "",
     "password": "",
-    "last_balance": "0"
+    "last_balance": "0",
+    "bet_task": None # Thêm biến này để quản lý việc dừng bot
 }
 
 async def get_balance(page):
@@ -117,9 +118,10 @@ async def chay_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
     while state["is_running"]:
         try:
-            # 1. Gọi 2 API lấy dữ liệu
-            res_md5 = requests.get(API_MD5, timeout=10).json()
-            res_hu = requests.get(API_HU, timeout=10).json()
+            # 1. Gọi 2 API lấy dữ liệu (Sử dụng httpx bất đồng bộ)
+            async with httpx.AsyncClient() as client:
+                res_md5 = (await client.get(API_MD5, timeout=10)).json()
+                res_hu = (await client.get(API_HU, timeout=10)).json()
 
             current_session = res_hu.get("session") or res_hu.get("id") or time.strftime("%H%M%S")
 
@@ -151,6 +153,9 @@ async def chay_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
                 state["last_balance"] = new_balance
                 await context.bot.send_message(chat_id=chat_id, text=report, parse_mode="Markdown")
 
+        except asyncio.CancelledError:
+            # Thoát vòng lặp an toàn khi bị hủy task
+            break
         except Exception as e:
             logging.error(f"Lỗi trong vòng lặp cược: {e}")
             await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Lỗi ván cược: `{str(e)}`", parse_mode="Markdown")
@@ -170,8 +175,8 @@ async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state["is_running"] = True
     await update.message.reply_text("🚀 **ĐÃ BẮT ĐẦU KÍCH HOẠT AUTO CƯỢC 2 SÀN!**\nTool sẽ tự động nhận diện phiên API và báo kết quả liên tục.", parse_mode="Markdown")
 
-    # Chạy vòng lặp ngầm trong asyncio Task
-    asyncio.create_task(chay_loop(context, update.effective_chat.id))
+    # Lưu task vào state để quản lý
+    state["bet_task"] = asyncio.create_task(chay_loop(context, update.effective_chat.id))
 
 async def dung_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lệnh /dung"""
@@ -180,6 +185,10 @@ async def dung_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     state["is_running"] = False
+    # Hủy task đang chạy ngầm
+    if state.get("bet_task") and not state["bet_task"].done():
+        state["bet_task"].cancel()
+        
     await update.message.reply_text("🛑 **ĐÃ DỪNG AUTO CƯỢC THÀNH CÔNG!**", parse_mode="Markdown")
 
 def main():
