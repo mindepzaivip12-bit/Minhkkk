@@ -11,7 +11,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Token Bot
+# --- TOKEN MỚI CỦA BẠN ĐÃ ĐƯỢC CẬP NHẬT TẠI ĐÂY ---
 TELEGRAM_TOKEN = "8922811014:AAG0skxtzMPWNgM1ZpU8GWKKKaM-l-XDCBI"
 
 # Link API
@@ -44,43 +44,40 @@ def get_session_from_api(data):
     keys_to_find = ["session", "id", "phien", "session_id", "issue", "code"]
     
     if isinstance(data, dict):
-        # 1. Quét các key phổ biến ở cấp hiện tại
         for key in keys_to_find:
             if key in data and isinstance(data[key], (int, str)):
                 return str(data[key])
-        # 2. Đệ quy sâu vào bên trong
         for key, value in data.items():
             result = get_session_from_api(value)
             if result: return result
             
     elif isinstance(data, list) and len(data) > 0:
-        # Đệ quy vào phần tử đầu tiên của list
         return get_session_from_api(data[0])
         
     return None
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "🔥 **TOOL DỰ ĐOÁN TÀI XỈU LC79** 🔥\n"
+        "🎲 **HỆ THỐNG TOOL DỰ ĐOÁN LC79** 🎲\n"
         "➖➖➖➖➖➖➖➖➖➖➖\n"
-        "🎲 `/lctx` : Chọn sàn Tài Xỉu\n"
-        "🎲 `/lcmd5` : Chọn sàn MD5\n"
-        "🎲 `/chay` : Bắt đầu chạy tự động\n"
-        "🎲 `/dung` : Dừng chạy\n"
+        "👉 `/lctx` : Chọn game Tài Xỉu\n"
+        "👉 `/lcmd5` : Chọn game MD5\n"
+        "👉 `/chay` : Bắt đầu chạy dự đoán phiên\n"
+        "👉 `/dung` : Dừng chạy\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def lctx_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state["is_running"]:
-        return await update.message.reply_text("⚠️ Dừng tool trước khi đổi sàn (`/dung`).")
+        return await update.message.reply_text("⚠️ Dừng tool trước khi đổi game (`/dung`).")
     state["current_game"] = "lctx"
-    await update.message.reply_text("✅ **Đã chọn: LC79 Tài Xỉu**\n👉 Bấm `/chay` để chạy.", parse_mode="Markdown")
+    await update.message.reply_text("🎲 **Đã chọn game: LC79 Tài Xỉu**\n👉 Bấm `/chay` để chạy.", parse_mode="Markdown")
 
 async def lcmd5_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state["is_running"]:
-        return await update.message.reply_text("⚠️ Dừng tool trước khi đổi sàn (`/dung`).")
+        return await update.message.reply_text("⚠️ Dừng tool trước khi đổi game (`/dung`).")
     state["current_game"] = "lcmd5"
-    await update.message.reply_text("✅ **Đã chọn: LC79 MD5**\n👉 Bấm `/chay` để chạy.", parse_mode="Markdown")
+    await update.message.reply_text("🎲 **Đã chọn game: LC79 MD5**\n👉 Bấm `/chay` để chạy.", parse_mode="Markdown")
 
 async def fetch_and_predict(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """Gọi API lấy phiên và dự đoán"""
@@ -97,9 +94,8 @@ async def fetch_and_predict(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         # Lấy mã phiên từ API
         session_id = get_session_from_api(data)
 
-        # Nếu không tìm thấy mã phiên
         if not session_id:
-            session_id = "Lỗi API không có phiên"
+            session_id = "Đang chờ API..."
 
         # Nếu là phiên mới (tránh spam trùng phiên)
         if session_id != state["last_session"]:
@@ -109,11 +105,11 @@ async def fetch_and_predict(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
             ket_qua, phan_tram = generate_algorithm()
 
             msg = (
-                f"🎰 **{game_name}**\n"
+                f"🎲 **Chọn game: {game_name}**\n"
                 f"➖➖➖➖➖➖➖➖➖➖➖\n"
-                f"🆔 **Phiên API:** `{session_id}`\n"
-                f"🤖 **Thuật toán:** {ket_qua}\n"
-                f"📊 **Tỷ lệ:** {phan_tram}%\n"
+                f"🆔 **Phiên:** `{session_id}`\n"
+                f"🤖 **Thuật toán dự đoán:** {ket_qua}\n"
+                f"📊 **Tỷ lệ thắng:** {phan_tram}%\n"
                 f"➖➖➖➖➖➖➖➖➖➖➖"
             )
             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
@@ -125,11 +121,11 @@ async def auto_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """Vòng lặp tự động càn quét API"""
     while state["is_running"]:
         await fetch_and_predict(context, chat_id)
-        await asyncio.sleep(5) # 5 giây check 1 lần
+        await asyncio.sleep(5)
 
 async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not state["current_game"]:
-        return await update.message.reply_text("⚠️ Chưa chọn sàn! Chọn `/lctx` hoặc `/lcmd5`.")
+        return await update.message.reply_text("⚠️ Chưa chọn game! Chọn `/lctx` hoặc `/lcmd5`.")
     
     if state["is_running"]:
         return await update.message.reply_text("⚠️ Tool đang chạy rồi!")
