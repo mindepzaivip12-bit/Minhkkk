@@ -24,7 +24,7 @@ state = {
     "is_running": False,
     "bet_task": None,
     "last_session": None,
-    "be_cau": False  # Mặc định là Không bẻ cầu
+    "be_cau": False
 }
 
 def generate_algorithm(is_be_cau=False):
@@ -39,7 +39,6 @@ def generate_algorithm(is_be_cau=False):
     else:
         pt = random.randint(80, 100)
         
-    # Nếu bật chế độ Bẻ Cầu, tự động đảo ngược kết quả
     if is_be_cau:
         ket_qua = "Xỉu ❄️" if "Tài" in ket_qua else "Tài 🔥"
         
@@ -68,10 +67,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "➖➖➖➖➖➖➖➖➖➖➖\n"
         "👉 `/lctx` : Chọn game Tài Xỉu\n"
         "👉 `/lcmd5` : Chọn game MD5\n"
-        "👉 `/chay` : Chạy dự đoán phiên tiếp theo (+1)\n"
+        "👉 `/chay` : Chạy dự đoán (+2 phiên)\n"
         "👉 `/dung` : Dừng chạy\n"
         "👉 `/becau` : Bật thuật toán Bẻ Cầu\n"
-        "👉 `/kobecau` : Tắt Bẻ Cầu (Đánh theo quán tính)\n"
+        "👉 `/kobecau` : Tắt Bẻ Cầu\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -89,14 +88,14 @@ async def lcmd5_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def becau_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state["be_cau"] = True
-    await update.message.reply_text("🔄 **ĐÃ BẬT CHẾ ĐỘ BẺ CẦU**\nThuật toán sẽ tự động đảo ngược kết quả (Tài thành Xỉu, Xỉu thành Tài) khi cầu gãy.", parse_mode="Markdown")
+    await update.message.reply_text("🔄 **ĐÃ BẬT CHẾ ĐỘ BẺ CẦU**", parse_mode="Markdown")
 
 async def kobecau_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state["be_cau"] = False
-    await update.message.reply_text("✅ **ĐÃ TẮT CHẾ ĐỘ BẺ CẦU**\nThuật toán sẽ dự đoán theo quán tính bình thường.", parse_mode="Markdown")
+    await update.message.reply_text("✅ **ĐÃ TẮT CHẾ ĐỘ BẺ CẦU**", parse_mode="Markdown")
 
 async def fetch_and_predict(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Gọi API lấy phiên và dự đoán phiên tiếp theo (+1)"""
+    """Gọi API lấy phiên và dự đoán phiên tiếp theo"""
     game = state["current_game"]
     api_url = API_LCTX if game == "lctx" else API_LCMD5
     game_name = "LC79 TÀI XỈU" if game == "lctx" else "LC79 MD5"
@@ -107,30 +106,26 @@ async def fetch_and_predict(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
             res = await client.get(api_url, timeout=10)
             data = res.json()
 
-        # Lấy mã phiên hiện tại từ API
         current_session = get_session_from_api(data)
 
         if not current_session or not current_session.isdigit():
-            return # Bỏ qua nếu không lấy được mã phiên chuẩn
+            return
 
-        # Cộng thêm 1 để dự đoán cho phiên tiếp theo
-        next_session = str(int(current_session) + 1)
+        # SỬA LỖI CHẬM 1 PHIÊN: Cộng +2 thay vì +1 để bù trừ độ trễ mạng
+        # VD: API trả về 1001 -> Dự đoán cho 1003
+        next_session = str(int(current_session) + 2)
 
-        # Nếu là phiên mới chưa dự đoán (tránh spam trùng phiên)
         if next_session != state["last_session"]:
             state["last_session"] = next_session
             
-            # Lấy kết quả thuật toán (truyền trạng thái bẻ cầu vào)
             ket_qua, phan_tram = generate_algorithm(is_be_cau=state["be_cau"])
-
-            # Hiển thị trạng thái cầu
             trang_thai_cau = "🔄 Bẻ Cầu" if state["be_cau"] else "➡️ Không Bẻ Cầu"
 
             msg = (
                 f"🎲 **Chọn game: {game_name}**\n"
                 f"➖➖➖➖➖➖➖➖➖➖➖\n"
-                f"🆔 **Phiên hiện tại:** `{current_session}`\n"
-                f"⏭️ **Dự đoán phiên:** `{next_session}` (+1)\n"
+                f"🆔 **Phiên API:** `{current_session}`\n"
+                f"⏭️ **Dự đoán phiên:** `{next_session}` (+2)\n"
                 f"🔄 **Thuật toán:** {trang_thai_cau}\n"
                 f"🤖 **Dự đoán:** {ket_qua}\n"
                 f"📊 **Tỷ lệ thắng:** {phan_tram}%\n"
@@ -142,10 +137,10 @@ async def fetch_and_predict(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         logging.error(f"Lỗi API: {e}")
 
 async def auto_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Vòng lặp tự động càn quét API"""
+    """Vòng lặp tự động càn quét API (giảm xuống 2s để bắt phiên nhanh hơn)"""
     while state["is_running"]:
         await fetch_and_predict(context, chat_id)
-        await asyncio.sleep(5)
+        await asyncio.sleep(2) 
 
 async def chay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not state["current_game"]:
@@ -179,8 +174,6 @@ def main():
     app.add_handler(CommandHandler("lcmd5", lcmd5_command))
     app.add_handler(CommandHandler("chay", chay_command))
     app.add_handler(CommandHandler("dung", dung_command))
-    
-    # Thêm 2 lệnh bẻ cầu
     app.add_handler(CommandHandler("becau", becau_command))
     app.add_handler(CommandHandler("kobecau", kobecau_command))
     
